@@ -6,31 +6,29 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "next lint",
-    "amplify:push": "amplify push",
-    "amplify:pull": "amplify pull",
-    "amplify:publish": "amplify publish",
-    "amplify:status": "amplify status"
+    "lint": "next lint"
   },
   "dependencies": {
-    "react": "^18",
-    "react-dom": "^18",
-    "next": "15.3.3",
+    "@aws-sdk/client-dynamodb": "^3.470.0",
+    "@aws-sdk/lib-dynamodb": "^3.470.0",
+    "@tailwindcss/postcss": "^4.1.8",
     "aws-amplify": "^6.0.0",
-    "@aws-amplify/ui-react": "^6.0.0",
-    "lucide-react": "^0.263.1",
     "clsx": "^2.0.0",
+    "lucide-react": "^0.512.0",
+    "next": "15.3.3",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
     "tailwind-merge": "^2.0.0"
   },
   "devDependencies": {
-    "typescript": "^5",
     "@types/node": "^20",
     "@types/react": "^18",
     "@types/react-dom": "^18",
-    "autoprefixer": "^10.0.1",
+    "autoprefixer": "^10.4.21",
     "eslint": "^8",
     "eslint-config-next": "15.3.3",
-    "postcss": "^8",
-    "tailwindcss": "^3.3.0"
+    "postcss": "^8.5.4",
+    "tailwindcss": "^4.1.8",
+    "typescript": "^5"
   }
 }

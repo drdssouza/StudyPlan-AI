@@ -1,14 +1,18 @@
 'use client';
 import { useEffect, useState } from 'react';
+import HomePage from '@/components/HomePage';
 import LoginPage from '@/components/auth/LoginPage';
 import StudyPlannerApp from '@/components/dashboard/StudyPlannerApp';
 import LoadingSpinner from '@/components/ui/LoadingSpinner';
 import { authService } from '@/services/auth';
 import { User } from '@/types';
 
+type AppView = 'home' | 'login' | 'dashboard';
+
 export default function Home() {
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
+  const [currentView, setCurrentView] = useState<AppView>('home');
 
   useEffect(() => {
     checkAuthStatus();
@@ -19,12 +23,20 @@ export default function Home() {
       const result = await authService.getCurrentUser();
       if (result.success) {
         setUser(result.user);
+        setCurrentView('dashboard');
+      } else {
+        setCurrentView('home');
       }
     } catch (error) {
       console.log('Erro ao verificar usuário:', error);
+      setCurrentView('home');
     } finally {
       setLoading(false);
     }
+  };
+
+  const handleNavigateToLogin = () => {
+    setCurrentView('login');
   };
 
   const handleLogin = () => {
@@ -33,6 +45,7 @@ export default function Home() {
 
   const handleLogout = () => {
     setUser(null);
+    setCurrentView('home');
   };
 
   if (loading) {
@@ -46,9 +59,22 @@ export default function Home() {
     );
   }
 
-  if (!user) {
-    return <LoginPage onLogin={handleLogin} />;
+  // Renderizar baseado no estado atual
+  switch (currentView) {
+    case 'home':
+      return <HomePage onNavigateToLogin={handleNavigateToLogin} />;
+    
+    case 'login':
+      return <LoginPage onLogin={handleLogin} />;
+    
+    case 'dashboard':
+      if (!user) {
+        setCurrentView('home');
+        return null;
+      }
+      return <StudyPlannerApp user={user} onLogout={handleLogout} />;
+    
+    default:
+      return <HomePage onNavigateToLogin={handleNavigateToLogin} />;
   }
-
-  return <StudyPlannerApp user={user} onLogout={handleLogout} />;
 }
