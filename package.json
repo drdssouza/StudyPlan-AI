@@ -6,12 +6,12 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "next lint"
+    "lint": "next lint",
+    "check": "npm run lint && npm run build"
   },
   "dependencies": {
     "@aws-sdk/client-dynamodb": "^3.470.0",
     "@aws-sdk/lib-dynamodb": "^3.470.0",
-    "@tailwindcss/postcss": "^4.1.8",
     "aws-amplify": "^6.0.0",
     "clsx": "^2.0.0",
     "lucide-react": "^0.512.0",
@@ -25,10 +25,14 @@
     "@types/react": "^18",
     "@types/react-dom": "^18",
     "autoprefixer": "^10.4.21",
-    "eslint": "^8",
+    "eslint": "^9",
     "eslint-config-next": "15.3.3",
     "postcss": "^8.5.4",
     "tailwindcss": "^4.1.8",
     "typescript": "^5"
+  },
+  "engines": {
+    "node": ">=18.0.0",
+    "npm": ">=8.0.0"
   }
 }
