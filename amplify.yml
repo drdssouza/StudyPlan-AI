@@ -4,7 +4,7 @@ frontend:
     preBuild:
       commands:
         - echo "Installing dependencies..."
-        - npm ci --production=false
+        - npm install
         - echo "Dependencies installed successfully"
     build:
       commands:
@@ -19,4 +19,3 @@ frontend:
     paths:
       - node_modules/**/*
       - .next/cache/**/*
-      - .npm/**/*
