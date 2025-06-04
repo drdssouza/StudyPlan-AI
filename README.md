@@ -81,7 +81,7 @@ graph TB
     
     A --> I[Amazon Cognito]
     
-    F --> J[Claude 3 Sonnet]
+    F --> J[Anthropic Sonnet]
 ```
 
 ## 🚀 Como Executar Localmente
@@ -159,23 +159,6 @@ amplify push
 - Padronizar metodologia de ensino
 - Reduzir tempo de preparação de materiais
 
-## 🤝 Como Contribuir
-
-Contribuições são muito bem-vindas! Para contribuir:
-
-1. **Fork** o projeto
-2. **Crie** uma branch para sua feature (`git checkout -b feature/nova-funcionalidade`)
-3. **Commit** suas mudanças (`git commit -m 'Adiciona nova funcionalidade'`)
-4. **Push** para a branch (`git push origin feature/nova-funcionalidade`)
-5. **Abra** um Pull Request
-
-### **Áreas que Precisam de Contribuição**
-- 🎨 **Design/UX**: Melhorias na interface e experiência do usuário
-- 🧠 **IA/ML**: Otimização de algoritmos de análise e geração
-- 📱 **Mobile**: Desenvolvimento da versão mobile
-- 🧪 **Testes**: Implementação de testes automatizados
-- 📝 **Documentação**: Melhoria da documentação técnica
-
 ## 📊 Roadmap de Desenvolvimento
 
 ### **Fase 1 - MVP (Atual)**
@@ -216,7 +199,7 @@ Este projeto está sob a licença **MIT**. Veja o arquivo [LICENSE](LICENSE) par
 
 **Desenvolvedor**: Eduardo Schrotke 
 **Email**: eduardoschrotke@gmail.com  
-**LinkedIn**: [Seu LinkedIn](https://linkedin.com/in/seuperfil)  
+**LinkedIn**: [Seu LinkedIn](https://www.linkedin.com/in/eduardo-schrotke/)  
 
 ---
 
