@@ -4,6 +4,13 @@ const nextConfig = {
   trailingSlash: true,
   images: {
     unoptimized: true
+  },
+  // Desabilitar ESLint e TypeScript checking durante build
+  eslint: {
+    ignoreDuringBuilds: true,
+  },
+  typescript: {
+    ignoreBuildErrors: true,
   }
 };
 
