@@ -1,6 +1,5 @@
-
 'use client';
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { 
   Upload, 
   Clock, 
@@ -8,17 +7,21 @@ import {
   Target, 
   Calendar, 
   Settings, 
-  Plus, 
   Edit3, 
-  Trash2, 
   Check, 
   LogOut, 
   User,
   Brain,
-  CheckCircle
+  CheckCircle,
+  FileText,
+  AlertTriangle,
+  Star,
+  ArrowLeft,
+  X
 } from 'lucide-react';
 import { authService } from '@/services/auth';
 import { userDataService, UserProfile, UserStudyPlan } from '@/services/userData';
+import { apiService } from '@/services/api';
 import { User as UserType } from '@/types';
 import TopicDifficultyConfigurator from '@/components/TopicDifficultyConfigurator';
 
@@ -33,8 +36,13 @@ const StudyPlannerApp: React.FC<StudyPlannerAppProps> = ({ user, onLogout }) => 
   const [activeStudyPlan, setActiveStudyPlan] = useState<UserStudyPlan | null>(null);
   const [loading, setLoading] = useState(true);
   
+  // Estados para upload de PDF
+  const [uploadedFile, setUploadedFile] = useState<File | null>(null);
+  const [uploading, setUploading] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState(0);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  
   // Estados para análise de edital
-  const [editalText, setEditalText] = useState('');
   const [analyzingEdital, setAnalyzingEdital] = useState(false);
   const [analysisResult, setAnalysisResult] = useState<any>(null);
 
@@ -54,18 +62,22 @@ const StudyPlannerApp: React.FC<StudyPlannerAppProps> = ({ user, onLogout }) => 
   const loadUserData = async () => {
     try {
       setLoading(true);
-      const profile = await userDataService.getUserProfile(user.id);
       
-      if (profile) {
-        setUserProfile(profile);
-        
-        // Carregar plano ativo
-        const activePlan = await userDataService.getActiveStudyPlan(user.id);
-        if (activePlan) {
-          setActiveStudyPlan(activePlan);
-          setStudyHours(activePlan.preferences.hoursPerDay);
-          setSelectedSubjects(activePlan.subjects.filter(s => s.selected).map(s => s.name));
-        }
+      // Verificar se usuário existe, se não inicializar
+      let profile = await userDataService.getUserProfile(user.id);
+      
+      if (!profile) {
+        profile = await userDataService.initializeUserProfile(user.id, user.email, user.name);
+      }
+      
+      setUserProfile(profile);
+      
+      // Carregar plano ativo
+      const activePlan = await userDataService.getActiveStudyPlan(user.id);
+      if (activePlan) {
+        setActiveStudyPlan(activePlan);
+        setStudyHours(activePlan.preferences.hoursPerDay);
+        setSelectedSubjects(activePlan.subjects.filter(s => s.selected).map(s => s.name));
       }
     } catch (error) {
       console.error('Erro ao carregar dados do usuário:', error);
@@ -74,51 +86,72 @@ const StudyPlannerApp: React.FC<StudyPlannerAppProps> = ({ user, onLogout }) => 
     }
   };
 
-  const handleAnalyzeEdital = async () => {
-    if (!editalText.trim()) {
-      alert('Por favor, cole o texto do edital antes de analisar.');
+  // Handle file upload
+  const handleFileSelect = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (file && file.type === 'application/pdf') {
+      setUploadedFile(file);
+    } else {
+      alert('Por favor, selecione apenas arquivos PDF.');
+    }
+  };
+
+  const handleFileDrop = (event: React.DragEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    const file = event.dataTransfer.files[0];
+    if (file && file.type === 'application/pdf') {
+      setUploadedFile(file);
+    } else {
+      alert('Por favor, selecione apenas arquivos PDF.');
+    }
+  };
+
+  const handleDragOver = (event: React.DragEvent<HTMLDivElement>) => {
+    event.preventDefault();
+  };
+
+  // Upload e análise do PDF (SIMPLIFICADO)
+  const handleUploadAndAnalyze = async () => {
+    if (!uploadedFile) {
+      alert('Por favor, selecione um arquivo PDF primeiro.');
       return;
     }
 
-    setAnalyzingEdital(true);
-    
+    setUploading(true);
+    setUploadProgress(10);
+
     try {
-      console.log('Iniciando análise detalhada do edital...');
+      console.log('Iniciando análise direta do PDF...');
       
-      const response = await fetch('https://rvtyu6hh0c.execute-api.us-east-1.amazonaws.com/prod/analyze', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          editalText: editalText,
-          preferences: {},
-          userPreferences: {} // Para futuras personalizações
-        }),
-      });
-
-      if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`);
-      }
-
-      const result = await response.json();
-      console.log('Análise detalhada concluída:', result);
+      // Analisar PDF diretamente (sem upload separado)
+      setUploadProgress(30);
+      setAnalyzingEdital(true);
       
+      const result = await apiService.analyzeEdital(uploadedFile);
+      
+      setUploadProgress(100);
       setAnalysisResult(result);
+      setAnalyzingEdital(false);
       
-      // Reset dos estados de configuração
+      // Reset estados de upload
+      setUploadedFile(null);
+      setUploading(false);
+      setUploadProgress(0);
+      
+      // Reset configurações
       setTopicConfigurations({});
       setTopicConfigurationComplete(false);
       
     } catch (error) {
-      console.error('Erro ao analisar edital:', error);
+      console.error('Erro no processo:', error);
       setAnalysisResult({
         success: false,
-        error: 'Erro ao conectar com o servidor de análise',
-        suggestion: 'Verifique sua conexão e tente novamente'
+        error: error instanceof Error ? error.message : 'Erro inesperado',
+        suggestion: 'Verifique o arquivo e tente novamente'
       });
-    } finally {
       setAnalyzingEdital(false);
+      setUploading(false);
+      setUploadProgress(0);
     }
   };
 
@@ -146,242 +179,37 @@ const StudyPlannerApp: React.FC<StudyPlannerAppProps> = ({ user, onLogout }) => 
     }
   };
 
-  // Função para calcular horas totais ajustadas
-  const calculateTotalAdjustedHours = (): number => {
-    if (!analysisResult?.subjects) return 0;
-    
-    let totalHours = 0;
-    
-    analysisResult.subjects.forEach((subject: any) => {
-      subject.topics?.forEach((topic: any) => {
-        const configKey = `${subject.name}-${topic.name}`;
-        const config = topicConfigurations[configKey];
-        
-        if (config?.userDifficulty) {
-          const multipliers = {
-            'Muito Fácil': 0.5,
-            'Fácil': 0.7,
-            'Normal': 1.0,
-            'Difícil': 1.3,
-            'Muito Difícil': 1.8
-          };
-          
-          const multiplier = multipliers[config.userDifficulty as keyof typeof multipliers] || 1.0;
-          totalHours += Math.max(1, Math.round(topic.estimatedHours * multiplier));
-        } else {
-          totalHours += topic.estimatedHours || 0;
-        }
-      });
-    });
-    
-    return totalHours;
-  };
-
-  // Função para calcular prioridades de estudo
-  const calculateStudyPriorities = (): Array<{subject: string, topic: string, priority: number}> => {
-    if (!analysisResult?.subjects) return [];
-    
-    const priorities: Array<{subject: string, topic: string, priority: number}> = [];
-    
-    analysisResult.subjects.forEach((subject: any) => {
-      subject.topics?.forEach((topic: any) => {
-        const configKey = `${subject.name}-${topic.name}`;
-        const config = topicConfigurations[configKey];
-        
-        let priority = 50; // Base
-        
-        // Ajustar por dificuldade do usuário
-        if (config?.userDifficulty) {
-          const difficultyScores = {
-            'Muito Fácil': 10,
-            'Fácil': 25,
-            'Normal': 50,
-            'Difícil': 75,
-            'Muito Difícil': 90
-          };
-          priority += difficultyScores[config.userDifficulty as keyof typeof difficultyScores] || 50;
-        }
-        
-        // Ajustar por peso da disciplina
-        if (subject.weight) {
-          priority += subject.weight;
-        }
-        
-        // Ajustar por dificuldade da IA
-        const aiDifficultyScores = {
-          'Baixo': 10,
-          'Médio': 20,
-          'Alto': 30
-        };
-        priority += aiDifficultyScores[topic.difficulty as keyof typeof aiDifficultyScores] || 20;
-        
-        priorities.push({
-          subject: subject.name,
-          topic: topic.name,
-          priority: Math.min(priority, 200) // Limitar a 200
-        });
-      });
-    });
-    
-    return priorities.sort((a, b) => b.priority - a.priority);
-  };
-
-  // Função para gerar cronograma detalhado
-  const handleGenerateSchedule = async () => {
-    setTopicConfigurationComplete(true);
-    console.log('Configuração de tópicos completa!');
-  };
-
-  // Função auxiliar para calcular horas ajustadas por tópico
-  const calculateAdjustedTopicHours = (originalHours: number, userDifficulty: string): number => {
-    const multipliers = {
-      'Muito Fácil': 0.5,
-      'Fácil': 0.7,
-      'Normal': 1.0,
-      'Difícil': 1.3,
-      'Muito Difícil': 1.8
-    };
-    
-    const multiplier = multipliers[userDifficulty as keyof typeof multipliers] || 1.0;
-    return Math.max(1, Math.round(originalHours * multiplier));
-  };
-
-  // Função auxiliar para calcular prioridade de um tópico específico
-  const calculateTopicPriority = (subject: any, topic: any, config: any): number => {
-    let priority = 50;
-    
-    // Dificuldade do usuário (peso maior)
-    if (config?.userDifficulty) {
-      const difficultyScores = {
-        'Muito Fácil': 10,
-        'Fácil': 25,
-        'Normal': 50,
-        'Difícil': 75,
-        'Muito Difícil': 90
-      };
-      priority += (difficultyScores[config.userDifficulty as keyof typeof difficultyScores] || 50) * 0.6;
-    }
-    
-    // Peso da disciplina
-    if (subject.weight) {
-      priority += (subject.weight * 0.3);
-    }
-    
-    // Dificuldade da IA
-    const aiDifficultyScores = {
-      'Baixo': 10,
-      'Médio': 20,
-      'Alto': 30
-    };
-    priority += (aiDifficultyScores[topic.difficulty as keyof typeof aiDifficultyScores] || 20) * 0.1;
-    
-    return Math.round(priority);
-  };
-
-  // Função para gerar cronograma detalhado
-  const generateDetailedSchedule = (subjects: any[]): Array<{day: string, morning: string, afternoon: string, evening: string}> => {
-    const schedule = [];
-    const days = ['Segunda', 'Terça', 'Quarta', 'Quinta', 'Sexta', 'Sábado'];
-    
-    // Coletar todos os tópicos com prioridades
-    const allTopics: Array<{
-      subject: string,
-      topic: string, 
-      hours: number,
-      priority: number,
-      methods: string[]
-    }> = [];
-    
-    subjects.forEach(subject => {
-      subject.topics?.forEach((topic: any) => {
-        allTopics.push({
-          subject: subject.name,
-          topic: topic.name,
-          hours: topic.adjustedHours || topic.estimatedHours,
-          priority: topic.priority || 50,
-          methods: topic.studyMethods || ['teoria', 'exercicios']
-        });
-      });
-    });
-    
-    // Ordenar por prioridade
-    allTopics.sort((a, b) => b.priority - a.priority);
-    
-    // Distribuir pelos dias da semana
-    let currentTopicIndex = 0;
-    const hoursPerPeriod = Math.floor(studyHours / 3); // Dividir em 3 períodos
-    
-    for (let dayIndex = 0; dayIndex < days.length; dayIndex++) {
-      const day = days[dayIndex];
-      
-      // Manhã - Tópicos de alta prioridade
-      const morningTopic = allTopics[currentTopicIndex % allTopics.length];
-      const morning = `${morningTopic.topic} (${hoursPerPeriod}h) - ${morningTopic.methods[0] || 'teoria'}`;
-      
-      // Tarde - Exercícios ou revisão
-      currentTopicIndex++;
-      const afternoonTopic = allTopics[currentTopicIndex % allTopics.length];
-      const afternoon = `${afternoonTopic.topic} - Exercícios (${hoursPerPeriod}h)`;
-      
-      // Noite - Revisão ou tópico secundário
-      currentTopicIndex++;
-      const eveningActivity = dayIndex % 2 === 0 ? 
-        'Revisão geral (1h)' : 
-        `${allTopics[(currentTopicIndex + 1) % allTopics.length].topic} - Resumo (1h)`;
-      
-      schedule.push({
-        day,
-        morning,
-        afternoon,
-        evening: eveningActivity
-      });
-      
-      currentTopicIndex++;
-    }
-    
-    return schedule;
-  };
-
-  // Função para finalizar e criar o plano completo
+  // Função para finalizar e criar o plano completo (SIMPLIFICADO)
   const handleFinalizeAndCreatePlan = async () => {
     if (!analysisResult?.success) return;
     
     setGeneratingSchedule(true);
     
     try {
-      // Preparar dados do plano com configurações detalhadas
-      const enhancedSubjects = analysisResult.subjects.map((subject: any) => ({
-        ...subject,
-        topics: subject.topics?.map((topic: any) => {
-          const configKey = `${subject.name}-${topic.name}`;
-          const config = topicConfigurations[configKey];
-          
-          return {
-            ...topic,
-            userDifficulty: config?.userDifficulty,
-            userNotes: config?.userNotes,
-            adjustedHours: config?.userDifficulty ? calculateAdjustedTopicHours(topic.estimatedHours, config.userDifficulty) : topic.estimatedHours,
-            priority: calculateTopicPriority(subject, topic, config),
-            selected: true
-          };
-        }) || []
-      }));
-
-      // Gerar cronograma detalhado
-      const detailedSchedule = generateDetailedSchedule(enhancedSubjects);
-      
-      // Criar plano enriquecido para salvar
+      // Criar plano localmente (sem API)
       const planData = {
         name: analysisResult.examInfo?.name || 'Plano Personalizado',
-        editalText,
-        subjects: enhancedSubjects,
+        subjects: analysisResult.subjects?.map((subject: any) => ({
+          ...subject,
+          topics: subject.topics?.map((topic: any) => {
+            const configKey = `${subject.name}-${topic.name}`;
+            const config = topicConfigurations[configKey];
+            
+            return {
+              ...topic,
+              userDifficulty: config?.userDifficulty,
+              userNotes: config?.userNotes,
+              selected: true
+            };
+          }) || [],
+          selected: true
+        })) || [],
         examInfo: analysisResult.examInfo,
-        schedule: detailedSchedule,
         progress: {
-          totalHours: calculateTotalAdjustedHours(),
+          totalHours: analysisResult.studyRecommendations?.totalEstimatedHours || 0,
           completedHours: 0,
           percentage: 0,
-          weeklyGoal: studyHours * 6, // 6 dias por semana
+          weeklyGoal: studyHours * 6,
           currentWeekHours: 0
         },
         preferences: {
@@ -391,16 +219,10 @@ const StudyPlannerApp: React.FC<StudyPlannerAppProps> = ({ user, onLogout }) => 
           preferredPeriod: 'Distribuído',
           includeRevisions: true,
           weeklySimulations: true
-        },
-        metadata: {
-          configuredTopics: Object.keys(topicConfigurations).length,
-          analysisVersion: '3.0-detailed',
-          createdWithAI: true,
-          userCustomizations: true
         }
       };
 
-      // Salvar plano no sistema
+      // Salvar plano usando localStorage
       const newPlan = await userDataService.createStudyPlan(user.id, planData);
       setActiveStudyPlan(newPlan);
       await loadUserData();
@@ -412,7 +234,6 @@ const StudyPlannerApp: React.FC<StudyPlannerAppProps> = ({ user, onLogout }) => 
       setAnalysisResult(null);
       setTopicConfigurations({});
       setTopicConfigurationComplete(false);
-      setEditalText('');
       
       console.log('Plano criado com sucesso:', newPlan);
       
@@ -422,37 +243,6 @@ const StudyPlannerApp: React.FC<StudyPlannerAppProps> = ({ user, onLogout }) => 
     } finally {
       setGeneratingSchedule(false);
     }
-  };
-
-  const handleUpdateStudyHours = async (hours: number) => {
-    setStudyHours(hours);
-    
-    if (activeStudyPlan) {
-      const updatedPlan = await userDataService.updateStudyPlan(user.id, activeStudyPlan.id, {
-        preferences: {
-          ...activeStudyPlan.preferences,
-          hoursPerDay: hours
-        }
-      });
-      setActiveStudyPlan(updatedPlan);
-    }
-  };
-
-  const handleSubjectToggle = async (subjectName: string) => {
-    if (!activeStudyPlan) return;
-
-    const updatedSubjects = activeStudyPlan.subjects.map(subject =>
-      subject.name === subjectName 
-        ? { ...subject, selected: !subject.selected }
-        : subject
-    );
-
-    const updatedPlan = await userDataService.updateStudyPlan(user.id, activeStudyPlan.id, {
-      subjects: updatedSubjects
-    });
-
-    setActiveStudyPlan(updatedPlan);
-    setSelectedSubjects(updatedSubjects.filter(s => s.selected).map(s => s.name));
   };
 
   const handleLogout = async () => {
@@ -601,7 +391,7 @@ const StudyPlannerApp: React.FC<StudyPlannerAppProps> = ({ user, onLogout }) => 
               </div>
             </div>
 
-            {/* Current Study Plan */}
+            {/* Current Study Plan ou Empty State */}
             {activeStudyPlan ? (
               <div className="bg-white rounded-xl shadow-sm p-6 border border-gray-100">
                 <div className="flex justify-between items-start mb-4">
@@ -637,7 +427,7 @@ const StudyPlannerApp: React.FC<StudyPlannerAppProps> = ({ user, onLogout }) => 
 
                 {/* Subjects */}
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                  {activeStudyPlan.subjects.filter(s => s.selected).map((subject, index) => (
+                  {activeStudyPlan.subjects.filter(s => s.selected).slice(0, 6).map((subject, index) => (
                     <div key={index} className="bg-gray-50 p-4 rounded-lg">
                       <h4 className="font-medium text-gray-900 mb-1">{subject.name}</h4>
                       <p className="text-sm text-gray-500 mb-2">
@@ -654,13 +444,12 @@ const StudyPlannerApp: React.FC<StudyPlannerAppProps> = ({ user, onLogout }) => 
                 </div>
               </div>
             ) : (
-              // Empty State
               <div className="bg-white rounded-xl shadow-sm p-12 border border-gray-100 text-center">
                 <div className="bg-gray-100 w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-4">
                   <BookOpen className="h-8 w-8 text-gray-400" />
                 </div>
                 <h3 className="text-lg font-medium text-gray-900 mb-2">Nenhum plano ativo</h3>
-                <p className="text-gray-500 mb-6">Crie seu primeiro plano de estudos analisando um edital</p>
+                <p className="text-gray-500 mb-6">Crie seu primeiro plano de estudos enviando um edital</p>
                 <button 
                   onClick={() => setActiveTab('edital')}
                   className="bg-indigo-600 text-white px-6 py-2 rounded-lg hover:bg-indigo-700 transition-colors"
@@ -716,7 +505,7 @@ const StudyPlannerApp: React.FC<StudyPlannerAppProps> = ({ user, onLogout }) => 
           <div className="space-y-8">
             <div className="text-center">
               <h2 className="text-2xl font-bold text-gray-900 mb-2">Análise Inteligente de Edital</h2>
-              <p className="text-gray-600">Envie o edital e configure suas dificuldades específicas para um plano personalizado</p>
+              <p className="text-gray-600">Envie o PDF do edital e configure suas dificuldades específicas para um plano personalizado</p>
             </div>
 
             {/* Step Indicator */}
@@ -725,7 +514,7 @@ const StudyPlannerApp: React.FC<StudyPlannerAppProps> = ({ user, onLogout }) => 
                 <div className={`w-8 h-8 rounded-full flex items-center justify-center ${!analysisResult ? 'bg-indigo-100 text-indigo-600' : 'bg-green-100 text-green-600'}`}>
                   1
                 </div>
-                <span className="font-medium">Analisar Edital</span>
+                <span className="font-medium">Upload PDF</span>
               </div>
               
               <div className={`w-8 h-1 ${analysisResult ? 'bg-green-200' : 'bg-gray-200'}`}></div>
@@ -747,55 +536,90 @@ const StudyPlannerApp: React.FC<StudyPlannerAppProps> = ({ user, onLogout }) => 
               </div>
             </div>
 
-            {/* Step 1: Edital Analysis */}
+            {/* Step 1: PDF Upload */}
             {!analysisResult && (
-              <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+              <div className="bg-white rounded-xl shadow-sm p-8 border border-gray-100">
+                <h3 className="text-lg font-semibold text-gray-900 mb-6">📄 Upload do Edital em PDF</h3>
+                
                 {/* Upload Area */}
-                <div className="bg-white rounded-xl shadow-sm p-8 border border-gray-100">
-                  <div className="border-2 border-dashed border-gray-300 rounded-lg p-12 text-center hover:border-indigo-500 transition-colors">
-                    <Upload className="h-12 w-12 text-gray-400 mx-auto mb-4" />
-                    <h3 className="text-lg font-medium text-gray-900 mb-2">Upload do Edital</h3>
-                    <p className="text-gray-500 mb-4">Arraste o arquivo PDF ou clique para selecionar</p>
-                    <button 
-                      onClick={() => alert('Funcionalidade em desenvolvimento')}
-                      className="bg-indigo-600 text-white px-6 py-2 rounded-lg hover:bg-indigo-700 transition-colors"
-                    >
-                      Selecionar Arquivo
-                    </button>
-                  </div>
+                <div 
+                  className="border-2 border-dashed border-gray-300 rounded-lg p-12 text-center hover:border-indigo-500 transition-colors cursor-pointer"
+                  onDrop={handleFileDrop}
+                  onDragOver={handleDragOver}
+                  onClick={() => fileInputRef.current?.click()}
+                >
+                  <Upload className="h-12 w-12 text-gray-400 mx-auto mb-4" />
+                  
+                  {!uploadedFile ? (
+                    <div>
+                      <h4 className="text-lg font-medium text-gray-900 mb-2">Selecione o arquivo PDF do edital</h4>
+                      <p className="text-gray-500 mb-4">Arraste o arquivo aqui ou clique para selecionar</p>
+                      <button className="bg-indigo-600 text-white px-6 py-2 rounded-lg hover:bg-indigo-700 transition-colors">
+                        Selecionar PDF
+                      </button>
+                    </div>
+                  ) : (
+                    <div>
+                      <FileText className="h-12 w-12 text-green-500 mx-auto mb-2" />
+                      <h4 className="text-lg font-medium text-gray-900 mb-2">{uploadedFile.name}</h4>
+                      <p className="text-gray-500 mb-4">{(uploadedFile.size / 1024 / 1024).toFixed(2)} MB</p>
+                      <div className="flex items-center justify-center space-x-4">
+                        <button 
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setUploadedFile(null);
+                          }}
+                          className="text-gray-500 hover:text-gray-700 flex items-center"
+                        >
+                          <X className="h-4 w-4 mr-1" />
+                          Remover
+                        </button>
+                        <button 
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleUploadAndAnalyze();
+                          }}
+                          disabled={uploading || analyzingEdital}
+                          className="bg-gradient-to-r from-indigo-600 to-purple-600 text-white px-6 py-3 rounded-lg hover:from-indigo-700 hover:to-purple-700 transition-colors disabled:opacity-50 flex items-center space-x-2"
+                        >
+                          <Brain className="h-5 w-5" />
+                          <span>Analisar com IA</span>
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                  
+                  <input
+                    ref={fileInputRef}
+                    type="file"
+                    accept=".pdf"
+                    onChange={handleFileSelect}
+                    className="hidden"
+                  />
                 </div>
 
-                {/* Text Input */}
-                <div className="bg-white rounded-xl shadow-sm p-8 border border-gray-100">
-                  <h3 className="text-lg font-medium text-gray-900 mb-4">Cole o Conteúdo do Edital</h3>
-                  <textarea
-                    value={editalText}
-                    onChange={(e) => setEditalText(e.target.value)}
-                    placeholder="Cole aqui o conteúdo do edital completo, incluindo o conteúdo programático..."
-                    className="w-full h-48 p-4 border border-gray-300 rounded-lg resize-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent text-gray-900 placeholder-gray-500"
-                  />
-                  <div className="mt-2 text-sm text-gray-500">
-                    {editalText.length} caracteres | Mínimo recomendado: 500 caracteres
-                  </div>
-                  
-                  <button 
-                    onClick={handleAnalyzeEdital}
-                    disabled={analyzingEdital || !editalText.trim() || editalText.length < 50}
-                    className="mt-4 bg-gradient-to-r from-indigo-600 to-purple-600 text-white px-6 py-3 rounded-lg hover:from-indigo-700 hover:to-purple-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center space-x-2 w-full justify-center"
-                  >
-                    {analyzingEdital ? (
-                      <>
-                        <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin"></div>
-                        <span>Analisando com IA...</span>
-                      </>
-                    ) : (
-                      <>
-                        <Brain className="h-5 w-5" />
-                        <span>Analisar com Inteligência Artificial</span>
-                      </>
+                {/* Progress */}
+                {(uploading || analyzingEdital) && (
+                  <div className="mt-6">
+                    <div className="flex items-center justify-between text-sm text-gray-600 mb-2">
+                      <span>
+                        {uploading ? 'Fazendo upload...' : 'Analisando com IA...'}
+                      </span>
+                      <span>{uploadProgress}%</span>
+                    </div>
+                    <div className="w-full bg-gray-200 rounded-full h-2">
+                      <div 
+                        className="bg-indigo-600 h-2 rounded-full transition-all duration-300"
+                        style={{ width: `${uploadProgress}%` }}
+                      ></div>
+                    </div>
+                    {analyzingEdital && (
+                      <p className="text-sm text-gray-500 mt-2">
+                        ⚡ Nossa IA está extraindo as disciplinas, pesos e conteúdos do edital...
+                      </p>
                     )}
-                  </button>
-                </div>
+                  </div>
+                )}
               </div>
             )}
 
@@ -846,7 +670,7 @@ const StudyPlannerApp: React.FC<StudyPlannerAppProps> = ({ user, onLogout }) => 
                 <TopicDifficultyConfigurator
                   subjects={analysisResult.subjects || []}
                   onConfigurationChange={handleTopicConfigurationChange}
-                  onNext={handleGenerateSchedule}
+                  onNext={() => setTopicConfigurationComplete(true)}
                 />
               </div>
             )}
@@ -874,16 +698,36 @@ const StudyPlannerApp: React.FC<StudyPlannerAppProps> = ({ user, onLogout }) => 
                     </div>
                     <div className="bg-green-50 p-4 rounded-lg">
                       <div className="text-2xl font-bold text-green-600">
-                        {calculateTotalAdjustedHours()}h
+                        {studyHours}h
                       </div>
-                      <div className="text-sm text-gray-600">Horas Ajustadas</div>
+                      <div className="text-sm text-gray-600">Horas por Dia</div>
                     </div>
                     <div className="bg-purple-50 p-4 rounded-lg">
                       <div className="text-2xl font-bold text-purple-600">
-                        {calculateStudyPriorities().length}
+                        {analysisResult?.subjects?.length || 0}
                       </div>
-                      <div className="text-sm text-gray-600">Prioridades</div>
+                      <div className="text-sm text-gray-600">Disciplinas</div>
                     </div>
+                  </div>
+
+                  {/* Hours per day selector */}
+                  <div className="mb-6">
+                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                      Quantas horas você pode estudar por dia?
+                    </label>
+                    <div className="flex items-center justify-center space-x-4">
+                      <span className="text-sm text-gray-500">2h</span>
+                      <input
+                        type="range"
+                        min="2"
+                        max="12"
+                        value={studyHours}
+                        onChange={(e) => setStudyHours(Number(e.target.value))}
+                        className="w-64"
+                      />
+                      <span className="text-sm text-gray-500">12h</span>
+                    </div>
+                    <div className="text-lg font-semibold text-indigo-600 mt-2">{studyHours} horas por dia</div>
                   </div>
 
                   <button
@@ -940,149 +784,52 @@ const StudyPlannerApp: React.FC<StudyPlannerAppProps> = ({ user, onLogout }) => 
           </div>
         )}
 
-        {/* Configuração Tab */}
+        {/* Configuração Tab - Simplificado */}
         {activeTab === 'configuracao' && (
           <div className="space-y-8">
             <div className="text-center">
               <h2 className="text-2xl font-bold text-gray-900 mb-2">Configuração do Plano</h2>
               <p className="text-gray-600">
-                {activeStudyPlan ? `Configurando: ${activeStudyPlan.name}` : 'Personalize seu plano de estudos'}
+                {activeStudyPlan ? `Configurando: ${activeStudyPlan.name}` : 'Crie um plano primeiro enviando um edital'}
               </p>
             </div>
 
             {activeStudyPlan ? (
-              <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-                {/* Study Hours */}
-                <div className="bg-white rounded-xl shadow-sm p-6 border border-gray-100">
-                  <h3 className="text-lg font-semibold text-gray-900 mb-4">Horas de Estudo</h3>
-                  <div className="space-y-4">
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-2">
-                        Horas por dia: {studyHours}h
-                      </label>
-                      <input
-                        type="range"
-                        min="1"
-                        max="12"
-                        value={studyHours}
-                        onChange={(e) => handleUpdateStudyHours(Number(e.target.value))}
-                        className="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer slider"
-                      />
-                      <div className="flex justify-between text-xs text-gray-500 mt-1">
-                        <span>1h</span>
-                        <span>12h</span>
-                      </div>
-                    </div>
-                    
-                    <div className="mt-6">
-                      <label className="block text-sm font-medium text-gray-700 mb-2">Dias da semana</label>
-                      <div className="grid grid-cols-2 gap-2">
-                        {['Segunda', 'Terça', 'Quarta', 'Quinta', 'Sexta', 'Sábado', 'Domingo'].map((day) => {
-                          const isSelected = activeStudyPlan.preferences.daysPerWeek.includes(day.toLowerCase());
-                          return (
-                            <label key={day} className="flex items-center space-x-2">
-                              <input 
-                                type="checkbox" 
-                                checked={isSelected}
-                                className="rounded" 
-                                readOnly
-                              />
-                              <span className="text-sm text-gray-700">{day}</span>
-                            </label>
-                          );
-                        })}
-                      </div>
-                    </div>
+              <div className="bg-white rounded-xl shadow-sm p-6 border border-gray-100">
+                <h3 className="text-lg font-semibold text-gray-900 mb-4">Configurações Básicas</h3>
+                
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                      Horas de estudo por dia: {studyHours}h
+                    </label>
+                    <input
+                      type="range"
+                      min="1"
+                      max="12"
+                      value={studyHours}
+                      onChange={(e) => setStudyHours(Number(e.target.value))}
+                      className="w-full"
+                    />
+                  </div>
+                  
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                      Matérias Selecionadas: {activeStudyPlan.subjects.filter(s => s.selected).length}
+                    </label>
+                    <p className="text-sm text-gray-500">
+                      {activeStudyPlan.subjects.filter(s => s.selected).map(s => s.name).join(', ')}
+                    </p>
                   </div>
                 </div>
-
-                {/* Subject Selection */}
-                <div className="bg-white rounded-xl shadow-sm p-6 border border-gray-100">
-                  <h3 className="text-lg font-semibold text-gray-900 mb-4">Matérias</h3>
-                  <div className="space-y-3">
-                    {activeStudyPlan.subjects.map((subject, index) => (
-                      <label key={index} className="flex items-center justify-between p-3 hover:bg-gray-50 rounded-lg cursor-pointer">
-                        <div className="flex items-center">
-                          <input
-                            type="checkbox"
-                            checked={subject.selected}
-                            onChange={() => handleSubjectToggle(subject.name)}
-                            className="rounded mr-3"
-                          />
-                          <div>
-                            <p className="font-medium text-gray-900">{subject.name}</p>
-                            <p className="text-xs text-gray-500">
-                              Peso: {subject.weight}% • {subject.estimatedHours}h
-                            </p>
-                          </div>
-                        </div>
-                        <span className={`px-2 py-1 text-xs rounded-full font-medium ${
-                          subject.difficulty === 'Alto' ? 'bg-red-100 text-red-800' :
-                          subject.difficulty === 'Médio' ? 'bg-yellow-100 text-yellow-800' :
-                          'bg-green-100 text-green-800'
-                        }`}>
-                          {subject.difficulty}
-                        </span>
-                      </label>
-                    ))}
-                  </div>
-                </div>
-
-                {/* Preferences */}
-                <div className="bg-white rounded-xl shadow-sm p-6 border border-gray-100">
-                  <h3 className="text-lg font-semibold text-gray-900 mb-4">Preferências</h3>
-                  <div className="space-y-4">
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-2">Prioridade</label>
-                      <select 
-                        className="w-full p-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 text-gray-900"
-                        value={activeStudyPlan.preferences.priority}
-                        readOnly
-                      >
-                        <option>Matérias com maior peso</option>
-                        <option>Matérias mais difíceis</option>
-                        <option>Distribuição equilibrada</option>
-                      </select>
-                    </div>
-                    
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-2">Período preferido</label>
-                      <select 
-                        className="w-full p-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 text-gray-900"
-                        value={activeStudyPlan.preferences.preferredPeriod}
-                        readOnly
-                      >
-                        <option>Manhã</option>
-                        <option>Tarde</option>
-                        <option>Noite</option>
-                        <option>Distribuído</option>
-                      </select>
-                    </div>
-                    
-                    <div>
-                      <label className="flex items-center space-x-2">
-                        <input 
-                          type="checkbox" 
-                          className="rounded" 
-                          checked={activeStudyPlan.preferences.includeRevisions}
-                          readOnly
-                        />
-                        <span className="text-sm text-gray-700">Incluir revisões</span>
-                      </label>
-                    </div>
-                    
-                    <div>
-                      <label className="flex items-center space-x-2">
-                        <input 
-                          type="checkbox" 
-                          className="rounded" 
-                          checked={activeStudyPlan.preferences.weeklySimulations}
-                          readOnly
-                        />
-                        <span className="text-sm text-gray-700">Simulados semanais</span>
-                      </label>
-                    </div>
-                  </div>
+                
+                <div className="mt-6 text-center">
+                  <button 
+                    onClick={() => setActiveTab('cronograma')}
+                    className="bg-gradient-to-r from-indigo-600 to-purple-600 text-white px-8 py-3 rounded-lg font-semibold hover:from-indigo-700 hover:to-purple-700 transition-all"
+                  >
+                    Ver Cronograma
+                  </button>
                 </div>
               </div>
             ) : (
@@ -1100,18 +847,6 @@ const StudyPlannerApp: React.FC<StudyPlannerAppProps> = ({ user, onLogout }) => 
                 </button>
               </div>
             )}
-
-            {/* Generate Button */}
-            {activeStudyPlan && (
-              <div className="text-center">
-                <button 
-                  onClick={() => setActiveTab('cronograma')}
-                  className="bg-gradient-to-r from-indigo-600 to-purple-600 text-white px-8 py-3 rounded-lg font-semibold hover:from-indigo-700 hover:to-purple-700 transition-all transform hover:scale-105"
-                >
-                  Ver Cronograma Atualizado
-                </button>
-              </div>
-            )}
           </div>
         )}
 
@@ -1125,11 +860,6 @@ const StudyPlannerApp: React.FC<StudyPlannerAppProps> = ({ user, onLogout }) => 
                     <h2 className="text-2xl font-bold text-gray-900">Cronograma Personalizado</h2>
                     <p className="text-gray-600">
                       {activeStudyPlan.name} • {activeStudyPlan.preferences.hoursPerDay}h/dia
-                      {activeStudyPlan.metadata?.createdWithAI && (
-                        <span className="ml-2 inline-flex items-center px-2 py-1 rounded-full text-xs bg-purple-100 text-purple-800">
-                          ✨ Gerado com IA
-                        </span>
-                      )}
                     </p>
                   </div>
                   <button 
@@ -1153,22 +883,22 @@ const StudyPlannerApp: React.FC<StudyPlannerAppProps> = ({ user, onLogout }) => 
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-gray-200">
-                        {activeStudyPlan.schedule.map((day, index) => (
+                        {(['Segunda-feira', 'Terça-feira', 'Quarta-feira', 'Quinta-feira', 'Sexta-feira', 'Sábado']).map((day, index) => (
                           <tr key={index} className="hover:bg-gray-50">
-                            <td className="px-6 py-4 font-medium text-gray-900">{day.day}</td>
+                            <td className="px-6 py-4 font-medium text-gray-900">{day}</td>
                             <td className="px-6 py-4">
                               <div className="bg-blue-100 text-blue-800 px-3 py-1 rounded-full text-sm font-medium inline-block">
-                                {day.morning}
+                                {activeStudyPlan.subjects[index % activeStudyPlan.subjects.length]?.name || 'Matéria'} - Teoria
                               </div>
                             </td>
                             <td className="px-6 py-4">
                               <div className="bg-green-100 text-green-800 px-3 py-1 rounded-full text-sm font-medium inline-block">
-                                {day.afternoon}
+                                {activeStudyPlan.subjects[(index + 1) % activeStudyPlan.subjects.length]?.name || 'Matéria'} - Exercícios
                               </div>
                             </td>
                             <td className="px-6 py-4">
                               <div className="bg-purple-100 text-purple-800 px-3 py-1 rounded-full text-sm font-medium inline-block">
-                                {day.evening}
+                                Revisão Geral
                               </div>
                             </td>
                           </tr>
@@ -1183,8 +913,8 @@ const StudyPlannerApp: React.FC<StudyPlannerAppProps> = ({ user, onLogout }) => 
                   <div className="bg-white rounded-xl shadow-sm p-6 border border-gray-100">
                     <h3 className="text-lg font-semibold text-gray-900 mb-4">Progresso por Matéria</h3>
                     <div className="space-y-4">
-                      {activeStudyPlan.subjects.filter(s => s.selected).map((subject, index) => {
-                        const progress = Math.floor(Math.random() * 80) + 20; // Mock progress
+                      {activeStudyPlan.subjects.filter(s => s.selected).slice(0, 5).map((subject, index) => {
+                        const progress = Math.floor(Math.random() * 80) + 20;
                         return (
                           <div key={index}>
                             <div className="flex justify-between items-center mb-1">
@@ -1209,16 +939,16 @@ const StudyPlannerApp: React.FC<StudyPlannerAppProps> = ({ user, onLogout }) => 
                       <div className="inline-flex items-center justify-center w-32 h-32 bg-gradient-to-r from-indigo-500 to-purple-500 rounded-full text-white mb-4">
                         <div className="text-center">
                           <div className="text-2xl font-bold">{activeStudyPlan.progress.currentWeekHours}</div>
-                          <div className="text-sm opacity-80">de {activeStudyPlan.preferences.hoursPerDay * 5}h</div>
+                          <div className="text-sm opacity-80">de {activeStudyPlan.preferences.hoursPerDay * 6}h</div>
                         </div>
                       </div>
                       <p className="text-gray-600">
-                        Você está {Math.round((activeStudyPlan.progress.currentWeekHours / (activeStudyPlan.preferences.hoursPerDay * 5)) * 100)}% da sua meta semanal
+                        Você está {Math.round((activeStudyPlan.progress.currentWeekHours / (activeStudyPlan.preferences.hoursPerDay * 6)) * 100) || 0}% da sua meta semanal
                       </p>
                       <div className="mt-4 w-full bg-gray-200 rounded-full h-2">
                         <div 
                           className="bg-gradient-to-r from-indigo-500 to-purple-500 h-2 rounded-full" 
-                          style={{ width: `${Math.round((activeStudyPlan.progress.currentWeekHours / (activeStudyPlan.preferences.hoursPerDay * 5)) * 100)}%` }}
+                          style={{ width: `${Math.round((activeStudyPlan.progress.currentWeekHours / (activeStudyPlan.preferences.hoursPerDay * 6)) * 100) || 0}%` }}
                         ></div>
                       </div>
                     </div>

@@ -1,16 +1,22 @@
-import { dynamoDBService } from './dynamodb';
-
+// src/services/userData.ts - Usando localStorage
 export interface UserStudyPlan {
   id: string;
   userId: string;
   name: string;
-  editalText?: string;
   subjects: Array<{
     name: string;
     weight: number;
     difficulty: 'Baixo' | 'Médio' | 'Alto';
     estimatedHours: number;
-    topics: string[];
+    topics: Array<{
+      name: string;
+      description: string;
+      difficulty: 'Baixo' | 'Médio' | 'Alto';
+      estimatedHours: number;
+      userDifficulty?: 'Muito Fácil' | 'Fácil' | 'Normal' | 'Difícil' | 'Muito Difícil';
+      userNotes?: string;
+      studyMethods: string[];
+    }>;
     selected: boolean;
   }>;
   preferences: {
@@ -67,22 +73,26 @@ export interface UserProfile {
   updatedAt: string;
 }
 
+const STORAGE_KEYS = {
+  USER_PROFILE: 'studyplan_user_profile',
+  STUDY_PLANS: 'studyplan_study_plans'
+};
+
 export const userDataService = {
-  // Buscar perfil do usuário (ou criar se não existir)
+  // Buscar perfil do usuário do localStorage
   async getUserProfile(userId: string): Promise<UserProfile | null> {
     try {
-      // Primeiro tenta buscar no DynamoDB
-      let profile = await dynamoDBService.getUserProfile(userId);
+      if (typeof window === 'undefined') return null;
       
-      if (!profile) {
-        // Se não existe, retorna null (usuário novo)
-        return null;
-      }
-
-      // Buscar planos de estudo separadamente
-      const studyPlans = await dynamoDBService.getUserStudyPlans(userId);
-      profile.studyPlans = studyPlans;
-
+      const stored = localStorage.getItem(`${STORAGE_KEYS.USER_PROFILE}_${userId}`);
+      if (!stored) return null;
+      
+      const profile = JSON.parse(stored);
+      
+      // Buscar planos de estudo
+      const plans = await this.getUserStudyPlans(userId);
+      profile.studyPlans = plans;
+      
       return profile;
     } catch (error) {
       console.error('Erro ao buscar perfil do usuário:', error);
@@ -92,8 +102,32 @@ export const userDataService = {
 
   // Inicializar perfil do usuário (primeira vez)
   async initializeUserProfile(userId: string, email: string, name: string): Promise<UserProfile> {
+    const newProfile: UserProfile = {
+      userId,
+      email,
+      name,
+      studyPlans: [],
+      preferences: {
+        notifications: true,
+        emailUpdates: true,
+        theme: 'light'
+      },
+      stats: {
+        totalStudyHours: 0,
+        totalDaysStudied: 0,
+        longestStreak: 0,
+        currentStreak: 0,
+        totalPlansCreated: 0
+      },
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString()
+    };
+
     try {
-      return await dynamoDBService.initializeUser(userId, email, name);
+      if (typeof window !== 'undefined') {
+        localStorage.setItem(`${STORAGE_KEYS.USER_PROFILE}_${userId}`, JSON.stringify(newProfile));
+      }
+      return newProfile;
     } catch (error) {
       console.error('Erro ao inicializar perfil:', error);
       throw error;
@@ -102,48 +136,49 @@ export const userDataService = {
 
   // Criar novo plano de estudos
   async createStudyPlan(userId: string, planData: Partial<UserStudyPlan>): Promise<UserStudyPlan> {
+    const newPlan: UserStudyPlan = {
+      id: 'plan-' + Date.now(),
+      userId,
+      name: planData.name || 'Novo Plano',
+      subjects: planData.subjects || [],
+      preferences: planData.preferences || {
+        hoursPerDay: 4,
+        daysPerWeek: ['segunda', 'terça', 'quarta', 'quinta', 'sexta'],
+        priority: 'Matérias com maior peso',
+        preferredPeriod: 'Distribuído',
+        includeRevisions: true,
+        weeklySimulations: false
+      },
+      schedule: planData.schedule || this.generateBasicSchedule(planData.subjects || [], 4),
+      progress: {
+        totalHours: planData.progress?.totalHours || 0,
+        completedHours: 0,
+        percentage: 0,
+        weeklyGoal: 0,
+        currentWeekHours: 0
+      },
+      examInfo: planData.examInfo,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString()
+    };
+
     try {
-      const newPlan: UserStudyPlan = {
-        id: 'plan-' + Date.now(),
-        userId,
-        name: planData.name || 'Novo Plano',
-        editalText: planData.editalText,
-        subjects: planData.subjects || [],
-        preferences: planData.preferences || {
-          hoursPerDay: 4,
-          daysPerWeek: ['segunda', 'terça', 'quarta', 'quinta', 'sexta'],
-          priority: 'Matérias com maior peso',
-          preferredPeriod: 'Distribuído',
-          includeRevisions: true,
-          weeklySimulations: false
-        },
-        schedule: planData.schedule || [],
-        progress: {
-          totalHours: planData.progress?.totalHours || 0,
-          completedHours: 0,
-          percentage: 0,
-          weeklyGoal: 0,
-          currentWeekHours: 0
-        },
-        examInfo: planData.examInfo,
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString()
-      };
-
-      // Salvar plano no DynamoDB
-      await dynamoDBService.createStudyPlan(newPlan);
-
-      // Atualizar perfil do usuário (definir como plano ativo e incrementar stats)
-      await this.setActiveStudyPlan(userId, newPlan.id);
-      
-      const profile = await dynamoDBService.getUserProfile(userId);
-      if (profile) {
-        await dynamoDBService.updateUserProfile(userId, {
-          stats: {
-            ...profile.stats,
-            totalPlansCreated: profile.stats.totalPlansCreated + 1
-          }
-        });
+      if (typeof window !== 'undefined') {
+        // Salvar plano individual
+        const plans = await this.getUserStudyPlans(userId);
+        plans.push(newPlan);
+        localStorage.setItem(`${STORAGE_KEYS.STUDY_PLANS}_${userId}`, JSON.stringify(plans));
+        
+        // Definir como plano ativo
+        await this.setActiveStudyPlan(userId, newPlan.id);
+        
+        // Atualizar stats do usuário
+        const profile = await this.getUserProfile(userId);
+        if (profile) {
+          profile.stats.totalPlansCreated += 1;
+          profile.updatedAt = new Date().toISOString();
+          localStorage.setItem(`${STORAGE_KEYS.USER_PROFILE}_${userId}`, JSON.stringify(profile));
+        }
       }
 
       return newPlan;
@@ -153,10 +188,49 @@ export const userDataService = {
     }
   },
 
+  // Gerar cronograma básico
+  generateBasicSchedule(subjects: any[], hoursPerDay: number): Array<{day: string, morning: string, afternoon: string, evening: string}> {
+    const days = ['Segunda-feira', 'Terça-feira', 'Quarta-feira', 'Quinta-feira', 'Sexta-feira', 'Sábado'];
+    const schedule = [];
+    
+    for (let i = 0; i < days.length; i++) {
+      const subjectIndex = i % (subjects.length || 1);
+      const subject = subjects[subjectIndex]?.name || 'Estudo Geral';
+      
+      schedule.push({
+        day: days[i],
+        morning: `${subject} - Teoria (${Math.floor(hoursPerDay/3)}h)`,
+        afternoon: `${subject} - Exercícios (${Math.floor(hoursPerDay/3)}h)`,
+        evening: `Revisão Geral (${hoursPerDay - 2*Math.floor(hoursPerDay/3)}h)`
+      });
+    }
+    
+    return schedule;
+  },
+
   // Atualizar plano de estudos existente
   async updateStudyPlan(userId: string, planId: string, updates: Partial<UserStudyPlan>): Promise<UserStudyPlan> {
     try {
-      return await dynamoDBService.updateStudyPlan(planId, updates);
+      if (typeof window !== 'undefined') {
+        const plans = await this.getUserStudyPlans(userId);
+        const planIndex = plans.findIndex(plan => plan.id === planId);
+        
+        if (planIndex === -1) {
+          throw new Error('Plano não encontrado');
+        }
+        
+        const updatedPlan = {
+          ...plans[planIndex],
+          ...updates,
+          updatedAt: new Date().toISOString()
+        };
+        
+        plans[planIndex] = updatedPlan;
+        localStorage.setItem(`${STORAGE_KEYS.STUDY_PLANS}_${userId}`, JSON.stringify(plans));
+        
+        return updatedPlan;
+      }
+      throw new Error('localStorage não disponível');
     } catch (error) {
       console.error('Erro ao atualizar plano:', error);
       throw error;
@@ -166,9 +240,14 @@ export const userDataService = {
   // Definir plano ativo
   async setActiveStudyPlan(userId: string, planId: string): Promise<void> {
     try {
-      await dynamoDBService.updateUserProfile(userId, {
-        activeStudyPlanId: planId
-      });
+      if (typeof window !== 'undefined') {
+        const profile = await this.getUserProfile(userId);
+        if (profile) {
+          profile.activeStudyPlanId = planId;
+          profile.updatedAt = new Date().toISOString();
+          localStorage.setItem(`${STORAGE_KEYS.USER_PROFILE}_${userId}`, JSON.stringify(profile));
+        }
+      }
     } catch (error) {
       console.error('Erro ao definir plano ativo:', error);
       throw error;
@@ -178,87 +257,51 @@ export const userDataService = {
   // Buscar plano ativo
   async getActiveStudyPlan(userId: string): Promise<UserStudyPlan | null> {
     try {
-      const profile = await dynamoDBService.getUserProfile(userId);
+      const profile = await this.getUserProfile(userId);
       if (!profile?.activeStudyPlanId) {
         return null;
       }
 
-      return await dynamoDBService.getStudyPlan(profile.activeStudyPlanId);
+      const plans = await this.getUserStudyPlans(userId);
+      const activePlan = plans.find(plan => plan.id === profile.activeStudyPlanId);
+      return activePlan || null;
     } catch (error) {
       console.error('Erro ao buscar plano ativo:', error);
       return null;
     }
   },
 
-  // Atualizar progresso de estudos
-  async updateProgress(userId: string, planId: string, hoursStudied: number): Promise<void> {
+  // Buscar todos os planos do usuário
+  async getUserStudyPlans(userId: string): Promise<UserStudyPlan[]> {
     try {
-      // Buscar plano atual
-      const plan = await dynamoDBService.getStudyPlan(planId);
-      if (!plan) throw new Error('Plano não encontrado');
-
-      // Calcular novo progresso
-      const newCompletedHours = plan.progress.completedHours + hoursStudied;
-      const newCurrentWeekHours = plan.progress.currentWeekHours + hoursStudied;
-      const newPercentage = Math.round((newCompletedHours / plan.progress.totalHours) * 100);
-
-      // Atualizar plano
-      await dynamoDBService.updateStudyPlan(planId, {
-        progress: {
-          ...plan.progress,
-          completedHours: newCompletedHours,
-          currentWeekHours: newCurrentWeekHours,
-          percentage: newPercentage
-        }
-      });
-
-      // Atualizar estatísticas do usuário
-      const profile = await dynamoDBService.getUserProfile(userId);
-      if (profile) {
-        await dynamoDBService.updateUserProfile(userId, {
-          stats: {
-            ...profile.stats,
-            totalStudyHours: profile.stats.totalStudyHours + hoursStudied,
-            totalDaysStudied: profile.stats.totalDaysStudied + 1,
-            currentStreak: profile.stats.currentStreak + 1,
-            longestStreak: Math.max(profile.stats.longestStreak, profile.stats.currentStreak + 1)
-          }
-        });
-      }
-
-      // Salvar progresso detalhado
-      await dynamoDBService.saveProgress({
-        userId,
-        progressId: `${new Date().toISOString().split('T')[0]}#${Date.now()}`,
-        planId,
-        date: new Date().toISOString().split('T')[0],
-        subject: 'Estudo Geral', // Pode ser mais específico depois
-        hoursStudied,
-        topicsStudied: [],
-        completed: true,
-        notes: `${hoursStudied}h de estudo`
-      });
+      if (typeof window === 'undefined') return [];
+      
+      const stored = localStorage.getItem(`${STORAGE_KEYS.STUDY_PLANS}_${userId}`);
+      if (!stored) return [];
+      
+      return JSON.parse(stored);
     } catch (error) {
-      console.error('Erro ao atualizar progresso:', error);
-      throw error;
+      console.error('Erro ao buscar planos:', error);
+      return [];
     }
   },
 
   // Deletar plano de estudos
   async deleteStudyPlan(userId: string, planId: string): Promise<void> {
     try {
-      // Deletar plano
-      await dynamoDBService.deleteStudyPlan(planId);
-
-      // Se era o plano ativo, limpar referência
-      const profile = await dynamoDBService.getUserProfile(userId);
-      if (profile?.activeStudyPlanId === planId) {
-        const remainingPlans = await dynamoDBService.getUserStudyPlans(userId);
-        const newActiveId = remainingPlans.length > 0 ? remainingPlans[0].id : undefined;
+      if (typeof window !== 'undefined') {
+        const plans = await this.getUserStudyPlans(userId);
+        const filteredPlans = plans.filter(plan => plan.id !== planId);
+        localStorage.setItem(`${STORAGE_KEYS.STUDY_PLANS}_${userId}`, JSON.stringify(filteredPlans));
         
-        await dynamoDBService.updateUserProfile(userId, {
-          activeStudyPlanId: newActiveId
-        });
+        // Se era o plano ativo, limpar referência
+        const profile = await this.getUserProfile(userId);
+        if (profile?.activeStudyPlanId === planId) {
+          const newActiveId = filteredPlans.length > 0 ? filteredPlans[0].id : undefined;
+          if (newActiveId) {
+            await this.setActiveStudyPlan(userId, newActiveId);
+          }
+        }
       }
     } catch (error) {
       console.error('Erro ao deletar plano:', error);
@@ -266,43 +309,24 @@ export const userDataService = {
     }
   },
 
-  // Atualizar preferências do usuário
-  async updateUserPreferences(userId: string, preferences: Partial<UserProfile['preferences']>): Promise<void> {
+  // Verificar se usuário existe
+  async userExists(userId: string): Promise<boolean> {
     try {
-      const profile = await dynamoDBService.getUserProfile(userId);
-      if (!profile) throw new Error('Usuário não encontrado');
-
-      await dynamoDBService.updateUserProfile(userId, {
-        preferences: {
-          ...profile.preferences,
-          ...preferences
-        }
-      });
+      const profile = await this.getUserProfile(userId);
+      return profile !== null;
     } catch (error) {
-      console.error('Erro ao atualizar preferências:', error);
-      throw error;
-    }
-  },
-
-  // Buscar todos os planos do usuário
-  async getUserStudyPlans(userId: string): Promise<UserStudyPlan[]> {
-    try {
-      return await dynamoDBService.getUserStudyPlans(userId);
-    } catch (error) {
-      console.error('Erro ao buscar planos:', error);
-      return [];
+      return false;
     }
   },
 
   // Salvar resultado da análise de edital
   async saveEditalAnalysis(
-    userId: string, 
-    editalText: string, 
+    userId: string,
+    fileName: string,
     analysisResult: any
   ): Promise<UserStudyPlan> {
     const planData: Partial<UserStudyPlan> = {
-      name: analysisResult.examInfo?.name || 'Novo Concurso',
-      editalText,
+      name: analysisResult.examInfo?.name || fileName.replace('.pdf', ''),
       subjects: analysisResult.subjects?.map((subject: any) => ({
         name: subject.name,
         weight: subject.weight || 0,
@@ -322,24 +346,5 @@ export const userDataService = {
     };
 
     return this.createStudyPlan(userId, planData);
-  },
-
-  // Verificar se usuário existe (para uso interno)
-  async userExists(userId: string): Promise<boolean> {
-    try {
-      const profile = await dynamoDBService.getUserProfile(userId);
-      return profile !== null;
-    } catch (error) {
-      return false;
-    }
-  },
-
-  // Health check do serviço
-  async healthCheck(): Promise<boolean> {
-    try {
-      return await dynamoDBService.healthCheck();
-    } catch (error) {
-      return false;
-    }
   }
 };

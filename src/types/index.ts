@@ -1,9 +1,3 @@
-// src/types/index.ts
-
-// Re-export dos tipos globais
-export * from './global';
-
-// Tipos específicos da aplicação
 export interface User {
   id: string;
   email: string;
@@ -97,5 +91,14 @@ export interface FileUploadResult {
   success: boolean;
   fileKey?: string;
   uploadUrl?: string;
+  error?: string;
+}
+
+// Tipos para jobs assíncronos
+export interface JobStatus {
+  jobId: string;
+  status: 'RUNNING' | 'SUCCESS' | 'FAILED';
+  progress?: number;
+  estimatedDuration?: string;
   error?: string;
 }
