@@ -24,6 +24,7 @@ import { userDataService, UserProfile, UserStudyPlan } from '@/services/userData
 import { apiService } from '@/services/api';
 import { User as UserType } from '@/types';
 import TopicDifficultyConfigurator from '@/components/TopicDifficultyConfigurator';
+import DebugPanel from '@/components/DebugPanel';
 
 interface StudyPlannerAppProps {
   user: UserType;

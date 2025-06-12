@@ -1,4 +1,4 @@
-// src/services/api.ts - Simplificado para API Gateway existente
+// src/services/api.ts - Completo com polling
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || '';
 
 export interface JobResult {
@@ -81,58 +81,297 @@ export const apiService = {
     });
   },
 
-  // Analisar edital (Direto na Lambda - sem Step Function)
+  // Analisar edital (via S3 + Step Function)
   async analyzeEdital(file: File): Promise<AnalyzeEditalResponse> {
     try {
-      console.log('Convertendo PDF para base64...');
-      const fileContent = await this.pdfToBase64(file);
+      console.log('=== INÍCIO ANÁLISE EDITAL VIA S3 ===');
+      console.log('API_BASE_URL:', API_BASE_URL);
+      console.log('Arquivo:', { name: file.name, size: file.size, type: file.type });
       
-      // Verificar tamanho (limite prático: ~1MB base64)
-      if (fileContent.length > 1000000) {
+      if (!API_BASE_URL) {
+        console.error('❌ API_BASE_URL não configurada');
         return {
           success: false,
-          error: 'PDF muito grande. Limite: 1MB.',
+          error: 'API não configurada. Verifique as variáveis de ambiente.',
+          suggestion: 'Configure NEXT_PUBLIC_API_BASE_URL no .env.local'
+        };
+      }
+
+      // Verificar tamanho do arquivo
+      if (file.size > 10 * 1024 * 1024) { // 10MB
+        console.warn('⚠️ Arquivo muito grande:', file.size);
+        return {
+          success: false,
+          error: 'PDF muito grande. Limite: 10MB.',
           suggestion: 'Tente um PDF menor ou com menos páginas.'
         };
       }
-      
-      const requestData = {
-        fileContent,
-        fileName: file.name,
-        preferences: {}
 
-      };
-
-      console.log('Enviando para análise direta:', {
-        fileName: file.name,
-        fileSize: file.size,
-        contentLength: fileContent.length
-      });
+      console.log('🔄 Step 1: Obtendo URL assinada para upload...');
       
-      // Usar endpoint direto (sem Step Function)
-      const response = await fetch(`${API_BASE_URL}/analyze`, {
+      // 1. Obter URL assinada para upload no S3
+      const uploadUrlResponse = await fetch(`${API_BASE_URL}/upload`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify(requestData),
+        body: JSON.stringify({
+          fileName: file.name,
+          fileType: file.type
+        }),
       });
 
-      if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`);
+      if (!uploadUrlResponse.ok) {
+        const errorText = await uploadUrlResponse.text();
+        console.error('❌ Erro ao obter URL de upload:', uploadUrlResponse.status, errorText);
+        throw new Error(`Erro ao obter URL de upload: ${uploadUrlResponse.status} - ${errorText}`);
       }
 
-      const result = await response.json();
-      console.log('Resultado da análise:', result);
+      const uploadData = await uploadUrlResponse.json();
+      console.log('✅ Resposta completa do /upload:', uploadData);
       
-      return result;
+      // Verificar se a resposta vem no formato Lambda (com statusCode e body)
+      let parsedUploadData;
+      if (uploadData.statusCode && uploadData.body) {
+        console.log('🔄 Detectada resposta no formato Lambda, fazendo parse do body...');
+        parsedUploadData = JSON.parse(uploadData.body);
+      } else {
+        console.log('🔄 Resposta direta, usando dados como estão...');
+        parsedUploadData = uploadData;
+      }
+      
+      console.log('📋 Dados finais processados:', parsedUploadData);
+      
+      // Verificar se todos os campos necessários existem
+      if (!parsedUploadData.uploadUrl) {
+        console.error('❌ uploadUrl não encontrada na resposta:', parsedUploadData);
+        throw new Error('API não retornou uploadUrl válida');
+      }
+      
+      if (!parsedUploadData.fileKey) {
+        console.error('❌ fileKey não encontrada na resposta:', parsedUploadData);
+        throw new Error('API não retornou fileKey válida');
+      }
+      
+      console.log('✅ URL de upload obtida:', {
+        fileKey: parsedUploadData.fileKey,
+        bucketName: parsedUploadData.bucketName,
+        uploadUrl: parsedUploadData.uploadUrl ? 'OK' : 'MISSING'
+      });
+
+      console.log('📤 Step 2: Fazendo upload do PDF para S3...');
+      console.log('Upload URL:', uploadData.uploadUrl);
+      console.log('File type:', file.type);
+      console.log('File size:', file.size);
+      
+      // 2. Upload do arquivo para S3
+      const uploadResponse = await fetch(parsedUploadData.uploadUrl, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': file.type,
+        },
+        body: file,
+      });
+
+      console.log('📊 Upload response status:', uploadResponse.status, uploadResponse.statusText);
+      console.log('📊 Upload response headers:', Object.fromEntries(uploadResponse.headers.entries()));
+
+      if (!uploadResponse.ok) {
+        const errorText = await uploadResponse.text();
+        console.error('❌ Erro no upload:', uploadResponse.status, errorText);
+        throw new Error(`Erro no upload: ${uploadResponse.status} - ${errorText}`);
+      }
+
+      console.log('✅ Upload concluído para S3');
+
+      console.log('🚀 Step 3: Iniciando análise via Step Function...');
+      console.log('Dados para análise:', {
+        fileKey: parsedUploadData.fileKey,
+        fileName: file.name,
+        url: `${API_BASE_URL}/analyze`
+      });
+      
+      // 3. Iniciar análise via Step Function com fileKey
+      const analyzeResponse = await fetch(`${API_BASE_URL}/analyze`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Accept': 'application/json',
+        },
+        body: JSON.stringify({
+          fileKey: parsedUploadData.fileKey,
+          fileName: file.name,
+          preferences: {}
+        }),
+      });
+
+      console.log('📊 Analyze response status:', analyzeResponse.status, analyzeResponse.statusText);
+      console.log('📊 Analyze response headers:', Object.fromEntries(analyzeResponse.headers.entries()));
+
+      if (!analyzeResponse.ok) {
+        const errorText = await analyzeResponse.text();
+        console.error('❌ Erro ao iniciar análise:', analyzeResponse.status, errorText);
+        
+        return {
+          success: false,
+          error: `Erro HTTP ${analyzeResponse.status}: ${analyzeResponse.statusText}`,
+          suggestion: 'Verifique se a API está funcionando corretamente',
+          details: errorText
+        };
+      }
+
+      const responseText = await analyzeResponse.text();
+      console.log('📦 Analyze response body:', responseText.substring(0, 500), '...');
+
+      try {
+        // Parse da resposta da Step Function
+        const stepFunctionResponse = JSON.parse(responseText);
+        
+        // Verificar se é resposta da Step Function (tem body string)
+        if (stepFunctionResponse.body && typeof stepFunctionResponse.body === 'string') {
+          const jobResponse = JSON.parse(stepFunctionResponse.body);
+          
+          if (jobResponse.success && jobResponse.jobId) {
+            console.log('🚀 Job iniciado:', jobResponse.jobId);
+            console.log('⏳ Fazendo polling do resultado...');
+            
+            // Fazer polling do resultado
+            return await this.pollJobResult(jobResponse.jobId, jobResponse.poolingUrl);
+          } else {
+            throw new Error('Resposta inválida da Step Function');
+          }
+        } else {
+          // Resposta direta (não Step Function)
+          console.log('✅ Resposta direta recebida');
+          return stepFunctionResponse;
+        }
+        
+      } catch (parseError) {
+        console.error('❌ Erro ao parsear JSON:', parseError);
+        return {
+          success: false,
+          error: 'Resposta inválida da API',
+          suggestion: 'A API retornou uma resposta que não é JSON válido',
+          rawResponse: responseText.substring(0, 200)
+        };
+      }
+      
     } catch (error) {
-      console.error('Erro ao analisar edital:', error);
+      console.error('❌ Erro na requisição:', error);
+      
+      let errorMessage = 'Erro ao conectar com o servidor';
+      let suggestion = 'Verifique sua conexão e tente novamente';
+      
+      if (error instanceof TypeError && error.message.includes('fetch')) {
+        errorMessage = 'Erro de rede ou CORS';
+        suggestion = 'Verifique se a API está acessível e CORS está configurado';
+      }
+      
       return {
         success: false,
-        error: 'Erro ao conectar com o servidor'
+        error: errorMessage,
+        suggestion,
+        details: error.message
       };
     }
+  },
+
+  // Função para fazer polling do resultado do job
+  async pollJobResult(jobId: string, poolingUrl?: string): Promise<AnalyzeEditalResponse> {
+    const maxAttempts = 30; // 5 minutos (30 * 10s)
+    const pollInterval = 10000; // 10 segundos
+    
+    console.log(`🔄 Iniciando polling para job ${jobId}`);
+    
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      try {
+        console.log(`📡 Tentativa ${attempt}/${maxAttempts} - Verificando resultado...`);
+        
+        // OPÇÃO 1: Tentar via API Gateway (mais seguro)
+        try {
+          const statusResponse = await fetch(`${API_BASE_URL}/job-status/${jobId}`, {
+            method: 'GET',
+            headers: {
+              'Accept': 'application/json',
+            },
+          });
+          
+          if (statusResponse.ok) {
+            const result = await statusResponse.json();
+            
+            if (result.status === 'SUCCESS' || result.success) {
+              console.log('✅ Job concluído com sucesso via API!');
+              return result;
+            } else if (result.status === 'FAILED') {
+              console.error('❌ Job falhou:', result.error);
+              return {
+                success: false,
+                error: result.error || 'Job falhou na execução',
+                suggestion: 'Tente novamente com um PDF diferente'
+              };
+            } else {
+              console.log(`⏳ Job ainda executando via API... (status: ${result.status || 'RUNNING'})`);
+            }
+          } else if (statusResponse.status === 404) {
+            console.log(`⏳ Status ainda não disponível via API (tentativa ${attempt})`);
+          }
+        } catch (apiError) {
+          console.log(`⚠️ API indisponível, tentando S3 direto...`);
+          
+          // OPÇÃO 2: Fallback para S3 direto (pode dar CORS)
+          const resultUrl = poolingUrl || `https://studyplan-ai-jobs.s3.amazonaws.com/jobs/${jobId}/result.json`;
+          
+          const response = await fetch(resultUrl, {
+            method: 'GET',
+            headers: {
+              'Accept': 'application/json',
+            },
+          });
+          
+          if (response.ok) {
+            const result = await response.json();
+            
+            if (result.status === 'SUCCESS' || result.success) {
+              console.log('✅ Job concluído com sucesso via S3!');
+              return result;
+            } else if (result.status === 'FAILED') {
+              console.error('❌ Job falhou:', result.error);
+              return {
+                success: false,
+                error: result.error || 'Job falhou na execução',
+                suggestion: 'Tente novamente com um PDF diferente'
+              };
+            } else {
+              console.log(`⏳ Job ainda executando via S3... (status: ${result.status || 'RUNNING'})`);
+            }
+          } else if (response.status === 404) {
+            console.log(`⏳ Resultado ainda não disponível via S3 (tentativa ${attempt})`);
+          } else {
+            console.warn(`⚠️ Erro ao buscar resultado via S3: ${response.status}`);
+          }
+        }
+        
+        // Aguardar antes da próxima tentativa
+        if (attempt < maxAttempts) {
+          await new Promise(resolve => setTimeout(resolve, pollInterval));
+        }
+        
+      } catch (error) {
+        console.warn(`⚠️ Erro no polling (tentativa ${attempt}):`, error);
+        
+        if (attempt < maxAttempts) {
+          await new Promise(resolve => setTimeout(resolve, pollInterval));
+        }
+      }
+    }
+    
+    // Timeout
+    console.error('❌ Timeout: Job não concluído no tempo esperado');
+    return {
+      success: false,
+      error: 'Timeout: Análise demorou mais que o esperado',
+      suggestion: 'O PDF pode ser muito complexo. Tente um arquivo menor ou tente novamente.'
+    };
   },
 
   // Gerar plano de estudos (Step Function)
